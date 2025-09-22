@@ -86,7 +86,9 @@ logs/
 *.log
 
 # Data outputs (conforme solicitado)
-results/
+# results/
+results/*.joblib
+results/*.json
 outputs/
 predictions/
 *_predictions.csv

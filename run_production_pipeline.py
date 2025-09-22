@@ -374,6 +374,355 @@ class ProductionPipeline:
         
         plt.show()
     
+    def generate_monthly_plots(self):
+        """Gerar plots de acumulados mensais"""
+        print("\n📊 GERANDO PLOTS DE ACUMULADOS MENSAIS")
+        
+        # Criar DataFrame com resultados
+        train_results = pd.DataFrame({
+            'date': self.results['dates']['train'],
+            'observed': self.results['actuals']['train'],
+            'predicted': self.results['predictions']['train'],
+            'dataset': 'train'
+        })
+        
+        test_results = pd.DataFrame({
+            'date': self.results['dates']['test'],
+            'observed': self.results['actuals']['test'],
+            'predicted': self.results['predictions']['test'],
+            'dataset': 'test'
+        })
+        
+        # Combinar resultados
+        all_results = pd.concat([train_results, test_results], ignore_index=True)
+        
+        # Calcular acumulados mensais
+        all_results['year_month'] = all_results['date'].dt.to_period('M')
+        monthly_results = all_results.groupby(['year_month', 'dataset']).agg({
+            'observed': 'sum',
+            'predicted': 'sum'
+        }).reset_index()
+        
+        # Separar treino e teste
+        monthly_train = monthly_results[monthly_results['dataset'] == 'train'].copy()
+        monthly_test = monthly_results[monthly_results['dataset'] == 'test'].copy()
+        monthly_train['plot_date'] = monthly_train['year_month'].dt.to_timestamp()
+        monthly_test['plot_date'] = monthly_test['year_month'].dt.to_timestamp()
+        
+        # Calcular incerteza mensal simplificada
+        uncertainty_results = self.results['uncertainty']
+        
+        # Criar DataFrame com incerteza
+        train_uncertainty_df = pd.DataFrame({
+            'date': self.results['dates']['train'],
+            'uncertainty': np.full(len(self.results['dates']['train']), 
+                                 uncertainty_results['avg_interval_width'] / (2 * 1.96)),
+            'dataset': 'train'
+        })
+        
+        test_uncertainty_df = pd.DataFrame({
+            'date': self.results['dates']['test'],
+            'uncertainty': (uncertainty_results['upper_bound'] - uncertainty_results['lower_bound']) / (2 * 1.96),
+            'dataset': 'test'
+        })
+        
+        all_uncertainty = pd.concat([train_uncertainty_df, test_uncertainty_df], ignore_index=True)
+        all_uncertainty['year_month'] = all_uncertainty['date'].dt.to_period('M')
+        
+        # Somar incertezas mensais
+        monthly_uncertainty = all_uncertainty.groupby(['year_month', 'dataset']).agg({
+            'uncertainty': lambda x: np.sqrt(np.sum(x**2))
+        }).reset_index()
+        
+        # Mesclar com resultados mensais
+        monthly_train = monthly_train.merge(
+            monthly_uncertainty[monthly_uncertainty['dataset'] == 'train'][['year_month', 'uncertainty']], 
+            on='year_month', how='left'
+        )
+        monthly_test = monthly_test.merge(
+            monthly_uncertainty[monthly_uncertainty['dataset'] == 'test'][['year_month', 'uncertainty']], 
+            on='year_month', how='left'
+        )
+        
+        # Calcular intervalos de confiança
+        z_score = 1.96
+        monthly_train['lower_bound'] = np.maximum(monthly_train['predicted'] - z_score * monthly_train['uncertainty'], 0)
+        monthly_train['upper_bound'] = monthly_train['predicted'] + z_score * monthly_train['uncertainty']
+        monthly_test['lower_bound'] = np.maximum(monthly_test['predicted'] - z_score * monthly_test['uncertainty'], 0)
+        monthly_test['upper_bound'] = monthly_test['predicted'] + z_score * monthly_test['uncertainty']
+        
+        # Criar visualização mensal
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 16))
+        
+        # Plot superior: Série temporal completa mensal
+        ax1.scatter(monthly_train['plot_date'], monthly_train['observed'], 
+                   c='blue', alpha=0.7, s=60, label='Observado (Treino)', marker='o', edgecolors='darkblue', linewidth=1)
+        ax1.scatter(monthly_train['plot_date'], monthly_train['predicted'], 
+                   c='lightblue', alpha=0.8, s=45, label='Predito (Treino)', marker='^', edgecolors='blue', linewidth=1)
+        ax1.scatter(monthly_test['plot_date'], monthly_test['observed'], 
+                   c='red', alpha=0.8, s=60, label='Observado (Teste)', marker='o', edgecolors='darkred', linewidth=1)
+        ax1.scatter(monthly_test['plot_date'], monthly_test['predicted'], 
+                   c='orange', alpha=0.8, s=45, label='Predito (Teste)', marker='^', edgecolors='darkorange', linewidth=1)
+        
+        division_date = pd.to_datetime(self.config.test_start)
+        ax1.axvline(x=division_date, color='green', linestyle='--', linewidth=3, alpha=0.8, label='Divisão Treino/Teste')
+        
+        ax1.set_title('UFRJ Storm - Acumulados Mensais de Raios (2000-2019)', fontsize=18, fontweight='bold')
+        ax1.set_xlabel('Data', fontsize=14)
+        ax1.set_ylabel('Raios Acumulados por Mês', fontsize=14)
+        ax1.legend(loc='upper right', fontsize=12)
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot inferior: Período de teste com intervalo de confiança
+        ax2.fill_between(monthly_test['plot_date'], monthly_test['lower_bound'], monthly_test['upper_bound'], 
+                        alpha=0.3, color='gray', label='Intervalo de Confiança 95%')
+        ax2.scatter(monthly_test['plot_date'], monthly_test['observed'], 
+                   c='red', alpha=0.9, s=70, label='Observado (Teste)', marker='o', edgecolors='darkred', linewidth=1.2)
+        ax2.scatter(monthly_test['plot_date'], monthly_test['predicted'], 
+                   c='orange', alpha=0.9, s=60, label='Predito (Teste)', marker='^', edgecolors='darkorange', linewidth=1.2)
+        ax2.plot(monthly_test['plot_date'], monthly_test['observed'], 'r-', alpha=0.6, linewidth=2, label='_nolegend_')
+        ax2.plot(monthly_test['plot_date'], monthly_test['predicted'], 'orange', alpha=0.6, linewidth=2, linestyle='--', label='_nolegend_')
+        
+        # Calcular cobertura mensal
+        within_interval = ((monthly_test['observed'] >= monthly_test['lower_bound']) & 
+                          (monthly_test['observed'] <= monthly_test['upper_bound']))
+        monthly_coverage = within_interval.mean()
+        
+        ax2.set_title(f'Acumulados Mensais - Período de Teste com IC 95% (Cobertura: {monthly_coverage:.1%})', 
+                      fontsize=18, fontweight='bold')
+        ax2.set_xlabel('Data', fontsize=14)
+        ax2.set_ylabel('Raios Acumulados por Mês', fontsize=14)
+        ax2.legend(loc='upper right', fontsize=12)
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Salvar plot mensal
+        monthly_plot_path = self.output_dir / f"monthly_accumulations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        plt.savefig(monthly_plot_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Plot mensal salvo: {monthly_plot_path}")
+        
+        plt.show()
+        
+        # Estatísticas mensais
+        print(f"\n📊 ESTATÍSTICAS DOS ACUMULADOS MENSAIS:")
+        print(f"   🔵 Treino - Observado: {monthly_train['observed'].mean():.0f} ± {monthly_train['observed'].std():.0f} raios/mês")
+        print(f"   🔵 Treino - Predito: {monthly_train['predicted'].mean():.0f} ± {monthly_train['predicted'].std():.0f} raios/mês")
+        print(f"   🔴 Teste - Observado: {monthly_test['observed'].mean():.0f} ± {monthly_test['observed'].std():.0f} raios/mês")
+        print(f"   🔴 Teste - Predito: {monthly_test['predicted'].mean():.0f} ± {monthly_test['predicted'].std():.0f} raios/mês")
+        print(f"   🎯 Cobertura IC Mensal: {monthly_coverage:.1%}")
+        
+        return monthly_plot_path
+    
+    def generate_30day_plot(self):
+        """Gerar plot detalhado de 30 dias contínuos"""
+        print("\n🔍 GERANDO PLOT DE 30 DIAS CONTÍNUOS")
+        
+        # Dados do período de teste ordenados por data
+        test_data_sorted = self.test_data.sort_values(self.config.date_column)
+        
+        # Procurar janela de 30 dias com mais pontos
+        best_start = None
+        max_points = 0
+        window_size = 30
+        
+        for i in range(len(test_data_sorted) - 1):
+            start_date = test_data_sorted.iloc[i][self.config.date_column]
+            end_date = start_date + pd.Timedelta(days=window_size)
+            
+            # Contar pontos nesta janela
+            window_mask = ((test_data_sorted[self.config.date_column] >= start_date) & 
+                           (test_data_sorted[self.config.date_column] <= end_date))
+            points_in_window = window_mask.sum()
+            
+            if points_in_window > max_points:
+                max_points = points_in_window
+                best_start = start_date
+        
+        # Se não encontrou uma boa janela, usar o meio do período
+        if best_start is None or max_points < 5:
+            mid_point = len(test_data_sorted) // 2
+            best_start = test_data_sorted.iloc[mid_point][self.config.date_column]
+        
+        end_date = best_start + pd.Timedelta(days=window_size)
+        
+        # Filtrar dados para a janela de 30 dias
+        window_mask = ((test_data_sorted[self.config.date_column] >= best_start) & 
+                       (test_data_sorted[self.config.date_column] <= end_date))
+        window_data = test_data_sorted[window_mask].copy()
+        
+        if len(window_data) > 0:
+            # Obter dados da janela
+            window_indices = window_data.index
+            window_dates = window_data[self.config.date_column]
+            window_observed = self.y_test.loc[window_indices]
+            
+            # Obter predições para esta janela
+            test_pred = self.results['predictions']['test']
+            test_lower = self.results['uncertainty']['lower_bound']
+            test_upper = self.results['uncertainty']['upper_bound']
+            
+            window_pred = test_pred[self.y_test.index.get_indexer(window_indices)]
+            window_lower = test_lower[self.y_test.index.get_indexer(window_indices)]
+            window_upper = test_upper[self.y_test.index.get_indexer(window_indices)]
+            
+            # Criar plot detalhado
+            fig, ax = plt.subplots(1, 1, figsize=(16, 8))
+            
+            # Região do intervalo de confiança
+            ax.fill_between(window_dates, window_lower, window_upper, 
+                           alpha=0.3, color='lightblue', label='Intervalo de Confiança 95%')
+            
+            # Pontos observados e preditos
+            ax.scatter(window_dates, window_observed, c='red', alpha=0.9, s=80, 
+                      label='Observado', marker='o', edgecolors='darkred', linewidth=1.5, zorder=5)
+            ax.scatter(window_dates, window_pred, c='orange', alpha=0.9, s=70, 
+                      label='Predito', marker='^', edgecolors='darkorange', linewidth=1.5, zorder=5)
+            
+            # Linhas conectando os pontos
+            ax.plot(window_dates, window_observed, 'r-', alpha=0.7, linewidth=3, 
+                   label='Tendência Observada', zorder=4)
+            ax.plot(window_dates, window_pred, color='orange', alpha=0.7, linewidth=3, 
+                   linestyle='--', label='Tendência Predita', zorder=4)
+            
+            # Calcular métricas para esta janela
+            from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+            window_rmse = np.sqrt(mean_squared_error(window_observed, window_pred))
+            window_mae = mean_absolute_error(window_observed, window_pred)
+            window_r2 = r2_score(window_observed, window_pred) if len(window_observed) > 1 else 0
+            
+            # Cobertura do IC nesta janela
+            window_within = ((window_observed >= window_lower) & (window_observed <= window_upper))
+            window_coverage = window_within.mean()
+            
+            ax.set_title(f'Zoom: {window_size} Dias Contínuos ({best_start.strftime("%Y-%m-%d")} a {end_date.strftime("%Y-%m-%d")})\n'
+                        f'RMSE: {window_rmse:.1f} | R²: {window_r2:.3f} | Cobertura IC: {window_coverage:.1%}', 
+                        fontsize=16, fontweight='bold')
+            ax.set_xlabel('Data', fontsize=12)
+            ax.set_ylabel('Contagem de Raios', fontsize=12)
+            ax.legend(loc='upper right', fontsize=11)
+            ax.grid(True, alpha=0.3)
+            
+            # Rotacionar labels das datas
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+            
+            plt.tight_layout()
+            
+            # Salvar plot detalhado
+            detail30_plot_path = self.output_dir / f"detailed_30days_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            plt.savefig(detail30_plot_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Plot de 30 dias salvo: {detail30_plot_path}")
+            
+            plt.show()
+            
+            print(f"📊 Janela analisada: {len(window_data)} pontos em {window_size} dias")
+            print(f"📈 Período: {best_start.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}")
+            print(f"🎯 Métricas da janela - RMSE: {window_rmse:.1f}, R²: {window_r2:.3f}")
+            
+            return detail30_plot_path
+        else:
+            print("⚠️ Não foi possível criar plot de 30 dias - dados insuficientes")
+            return None
+    
+    def generate_specific_period_plot(self):
+        """Gerar plot para período específico 2018-11-01 a 2019-03-31"""
+        print("\n📅 GERANDO PLOT DO PERÍODO ESPECÍFICO (2018-11-01 a 2019-03-31)")
+        
+        # Definir período específico
+        specific_start = pd.to_datetime("2018-11-01")
+        specific_end = pd.to_datetime("2019-03-31")
+        
+        # Dados do período de teste ordenados por data
+        test_data_sorted = self.test_data.sort_values(self.config.date_column)
+        
+        # Filtrar dados para o período específico
+        specific_mask = ((test_data_sorted[self.config.date_column] >= specific_start) & 
+                        (test_data_sorted[self.config.date_column] <= specific_end))
+        specific_data = test_data_sorted[specific_mask].copy()
+        
+        if len(specific_data) > 0:
+            # Obter dados do período específico
+            specific_indices = specific_data.index
+            specific_dates = specific_data[self.config.date_column]
+            specific_observed = self.y_test.loc[specific_indices]
+            
+            # Obter predições para este período específico
+            test_pred = self.results['predictions']['test']
+            test_lower = self.results['uncertainty']['lower_bound']
+            test_upper = self.results['uncertainty']['upper_bound']
+            
+            specific_pred = test_pred[self.y_test.index.get_indexer(specific_indices)]
+            specific_lower = test_lower[self.y_test.index.get_indexer(specific_indices)]
+            specific_upper = test_upper[self.y_test.index.get_indexer(specific_indices)]
+            
+            # Criar plot específico
+            fig, ax = plt.subplots(1, 1, figsize=(16, 8))
+            
+            # Região do intervalo de confiança
+            ax.fill_between(specific_dates, specific_lower, specific_upper, 
+                           alpha=0.3, color='lightcoral', label='Intervalo de Confiança 95%')
+            
+            # Pontos observados e preditos
+            ax.scatter(specific_dates, specific_observed, c='darkred', alpha=0.9, s=80, 
+                      label='Observado', marker='o', edgecolors='maroon', linewidth=1.5, zorder=5)
+            ax.scatter(specific_dates, specific_pred, c='darkorange', alpha=0.9, s=70, 
+                      label='Predito', marker='^', edgecolors='orangered', linewidth=1.5, zorder=5)
+            
+            # Linhas conectando os pontos
+            ax.plot(specific_dates, specific_observed, 'darkred', alpha=0.7, linewidth=3, 
+                   label='Tendência Observada', zorder=4)
+            ax.plot(specific_dates, specific_pred, color='darkorange', alpha=0.7, linewidth=3, 
+                   linestyle='--', label='Tendência Predita', zorder=4)
+            
+            # Calcular métricas para este período
+            from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+            specific_rmse = np.sqrt(mean_squared_error(specific_observed, specific_pred))
+            specific_mae = mean_absolute_error(specific_observed, specific_pred)
+            specific_r2 = r2_score(specific_observed, specific_pred) if len(specific_observed) > 1 else 0
+            
+            # Cobertura do IC neste período
+            specific_within = ((specific_observed >= specific_lower) & (specific_observed <= specific_upper))
+            specific_coverage = specific_within.mean()
+            
+            # Adicionar marcadores para início de cada mês
+            months_in_period = pd.date_range(start=specific_start, end=specific_end, freq='MS')
+            for month_start in months_in_period:
+                ax.axvline(x=month_start, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+            
+            ax.set_title(f'Período Específico: Nov/2018 - Mar/2019 ({len(specific_data)} pontos)\n'
+                        f'RMSE: {specific_rmse:.1f} | MAE: {specific_mae:.1f} | R²: {specific_r2:.3f} | Cobertura IC: {specific_coverage:.1%}', 
+                        fontsize=16, fontweight='bold')
+            ax.set_xlabel('Data', fontsize=12)
+            ax.set_ylabel('Contagem de Raios', fontsize=12)
+            ax.legend(loc='upper right', fontsize=11)
+            ax.grid(True, alpha=0.3)
+            
+            # Rotacionar labels das datas
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+            
+            # Configurar formato das datas no eixo x
+            import matplotlib.dates as mdates
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+            
+            plt.tight_layout()
+            
+            # Salvar plot específico
+            specific_plot_path = self.output_dir / f"specific_period_2018-2019_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            plt.savefig(specific_plot_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Plot do período específico salvo: {specific_plot_path}")
+            
+            plt.show()
+            
+            print(f"📊 Período analisado: {len(specific_data)} pontos de {specific_start.strftime('%d/%m/%Y')} a {specific_end.strftime('%d/%m/%Y')}")
+            print(f"📈 Duração: {(specific_end - specific_start).days} dias")
+            print(f"🎯 Métricas do período - RMSE: {specific_rmse:.1f}, MAE: {specific_mae:.1f}, R²: {specific_r2:.3f}")
+            
+            return specific_plot_path
+        else:
+            print("⚠️ Não foi possível criar plot do período específico - dados insuficientes")
+            return None
+    
     def generate_report(self):
         """Gerar relatório final"""
         print("\n📋 ETAPA 6: GERAÇÃO DE RELATÓRIO")
@@ -449,6 +798,9 @@ class ProductionPipeline:
             self.train_models()
             self.evaluate_models()
             self.generate_plots()
+            self.generate_monthly_plots()
+            self.generate_30day_plot()
+            self.generate_specific_period_plot()
             self.generate_report()
             
             # Tempo total
