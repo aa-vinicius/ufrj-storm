@@ -1,14 +1,28 @@
 # Guia de Produção - UFRJ Storm
 
-Este documento descreve como executar o pipeline completo de Machine Learning em ambiente de produção, fora do ambiente de notebook.
+Este documento descreve como executar os pipelines de Machine Learning automatizados em ambiente de produção.
 
 ## 🎯 Objetivo
 
-Executar todo o pipeline de ML de forma automatizada, gerando:
+Executar pipelines ML completamente automatizados usando as classes `LightningPredictor` e `UncertaintyPredictor` da biblioteca `src/models.py`, gerando:
 - Modelos treinados e otimizados
-- Predições com intervalos de confiança
-- Visualizações da série temporal completa
-- Relatórios de performance detalhados
+- Predições com intervalos de confiança 95%
+- 5 visualizações automáticas da série temporal
+- Relatórios JSON/texto detalhados
+
+## ⚡ Pipelines Disponíveis
+
+### Pipeline Rápido (`run_quick_pipeline.py`)
+- **Uso**: Demonstração e validação rápida
+- **Algoritmo**: Random Forest otimizado
+- **Tempo**: 2-3 minutos
+- **Saída**: 5 plots + relatório JSON
+
+### Pipeline de Produção (`run_production_pipeline.py`) 
+- **Uso**: Ambiente produtivo completo
+- **Algoritmos**: Todos os 7 algoritmos disponíveis
+- **Tempo**: 10-15 minutos  
+- **Saída**: Seleção automática do melhor modelo + todos os plots
 
 ## 📋 Pré-requisitos Produtivos
 
@@ -28,17 +42,41 @@ pip install -r requirements.txt
 - Mínimo 1000 registros para treinamento
 - Features meteorológicas completas
 
-## 🔄 Pipeline Produtivo
+## � Execução dos Pipelines
 
-### Fase 1: Validação e Carregamento
+### Execução Simples
+
+```bash
+# Pipeline rápido (recomendado para validação)
+python run_quick_pipeline.py
+
+# Pipeline completo (produção)
+python run_production_pipeline.py
+```
+
+### Saídas Geradas
+
+#### Visualizações (5 plots automáticos):
+1. **Série temporal completa** (2000-2019)
+2. **Análise detalhada** do período de teste
+3. **Acumulados mensais** com IC 95%
+4. **Período contínuo** de 30 dias
+5. **Período específico** (Nov/2018 - Mar/2019)
+
+#### Relatórios:
+- **JSON**: Métricas, features importantes, arquivos gerados
+- **Modelo treinado**: Arquivo `.joblib` para uso posterior
+
+## 🔄 Arquitetura do Pipeline
+
+### Fase 1: Validação e Carregamento (Automática)
 
 ```python
-# 1.1 Executar testes de qualidade
-from notebooks.data_quality_tests import run_data_quality_tests
-test_results = run_data_quality_tests()
-
-# Critério de parada: 100% dos testes aprovados
-assert test_results['success_rate'] == 1.0, "Falha nos testes de qualidade"
+# 1.1 A biblioteca src/models.py executa automaticamente:
+# - Carregamento do CSV
+# - Validação da estrutura dos dados
+# - Testes de qualidade TDD (8 testes)
+# - Pré-processamento e limpeza
 ```
 
 **Critérios de Aprovação:**
@@ -47,24 +85,15 @@ assert test_results['success_rate'] == 1.0, "Falha nos testes de qualidade"
 - ✅ Consistência temporal > 90%
 - ✅ Variáveis target sem valores inválidos
 
-### Fase 2: Pré-processamento
+### Fase 2: Pré-processamento (Automático)
 
 ```python
-# 2.1 Aplicar limpeza dos dados
-preprocessor = DataPreprocessor(config)
-df_processed = preprocessor.prepare_features(df_raw)
+# 2.1 A classe LightningPredictor executa automaticamente:
+from src.models import LightningPredictor, UncertaintyPredictor
 
-# 2.2 Gerar features temporais
-feature_cols = preprocessor.get_feature_columns(df_processed)
-
-# 2.3 Dividir dados temporalmente
-train_data, test_data = split_data_temporal(df_processed, config)
-
-# 2.4 Escalonar features
-X_train_scaled, X_test_scaled, scaler = preprocessor.scale_features(
-    train_data[feature_cols], 
-    test_data[feature_cols]
-)
+# Carregamento e pré-processamento integrados
+lightning_predictor = LightningPredictor(config)
+# Interno: limpeza, features temporais, escalamento, divisão temporal
 ```
 
 **Validações da Fase 2:**
@@ -73,20 +102,18 @@ X_train_scaled, X_test_scaled, scaler = preprocessor.scale_features(
 - Shape teste: (>=200, 40)
 - Escalamento aplicado com sucesso
 
-### Fase 3: Treinamento dos Modelos
+### Fase 3: Treinamento dos Modelos (Automático)
 
 ```python
-# 3.1 Treinar modelo principal
-lightning_predictor = LightningPredictor(config)
-lightning_predictor.train_multiple_models(X_train_scaled, y_train)
+# 3.1 Pipeline rápido
+lightning_predictor.train_model()  # Random Forest otimizado
 
-# 3.2 Validar performance mínima
-best_model_rmse = lightning_predictor.model_scores[lightning_predictor.best_model_name]['rmse_cv_mean']
-assert best_model_rmse < 3000, f"RMSE muito alto: {best_model_rmse}"
+# 3.2 Pipeline produção  
+lightning_predictor.train_multiple_models()  # 7 algoritmos + seleção automática
 
-# 3.3 Treinar modelo de incerteza
+# 3.3 Modelo de incerteza (ambos pipelines)
 uncertainty_predictor = UncertaintyPredictor(lightning_predictor)
-uncertainty_predictor.train_uncertainty_model(X_train_scaled, y_train)
+uncertainty_predictor.train_uncertainty_model()
 ```
 
 **Critérios de Performance:**
@@ -94,19 +121,24 @@ uncertainty_predictor.train_uncertainty_model(X_train_scaled, y_train)
 - R² > 0.25
 - Modelo de incerteza treinado sem erros
 
-### Fase 4: Validação Final
+### Fase 4: Avaliação e Visualização (Automática)
 
 ```python
-# 4.1 Avaliar no conjunto de teste
-test_results = lightning_predictor.evaluate_all_models(X_test_scaled, y_test)
-uncertainty_results = uncertainty_predictor.evaluate_uncertainty(X_test_scaled, y_test)
+# 4.1 Avaliação automática
+# - Métricas de todos os modelos
+# - Seleção do melhor modelo
+# - Intervalos de confiança 95%
 
-# 4.2 Validar métricas finais
-best_r2 = test_results[lightning_predictor.best_model_name]['metrics']['r2']
-coverage = uncertainty_results['coverage']
+# 4.2 Geração automática de 5 plots:
+# - Série temporal completa
+# - Análise detalhada do teste  
+# - Acumulados mensais
+# - Período de 30 dias contínuos
+# - Período específico Nov/2018-Mar/2019
 
-assert best_r2 > 0.20, f"R² insuficiente: {best_r2}"
-assert coverage > 0.50, f"Cobertura baixa: {coverage}"
+# 4.3 Relatórios automáticos
+# - JSON com métricas e metadados
+# - Salvamento do modelo treinado
 ```
 
 **Métricas Mínimas para Produção:**
@@ -141,45 +173,32 @@ with open('../models/metadata.json', 'w') as f:
 
 ## 🚀 Execução em Produção
 
-### Script Principal
+### Execução Direta dos Pipelines
 
-```python
-def run_production_pipeline(input_file):
-    """Executar pipeline completo de produção"""
-    
-    print("🚀 INICIANDO PIPELINE PRODUTIVO UFRJ STORM")
-    print("=" * 60)
-    
-    try:
-        # Fase 1: Validação
-        print("📊 Fase 1: Validação dos dados...")
-        df = load_and_validate_data(input_file)
-        
-        # Fase 2: Pré-processamento
-        print("🔧 Fase 2: Pré-processamento...")
-        X_train, X_test, y_train, y_test = preprocess_data(df)
-        
-        # Fase 3: Treinamento
-        print("🤖 Fase 3: Treinamento dos modelos...")
-        model1, model2 = train_models(X_train, y_train)
-        
-        # Fase 4: Validação
-        print("📈 Fase 4: Validação final...")
-        metrics = validate_models(model1, model2, X_test, y_test)
-        
-        # Fase 5: Deploy
-        print("💾 Fase 5: Salvamento dos modelos...")
-        save_models(model1, model2, metrics)
-        
-        print("✅ PIPELINE EXECUTADO COM SUCESSO!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ ERRO NO PIPELINE: {str(e)}")
-        return False
+```bash
+# Pipeline rápido: demonstração com Random Forest
+python run_quick_pipeline.py
 
-# Executar
-success = run_production_pipeline('data/tma_sp.csv')
+# Saída esperada:
+# 🚀 PIPELINE RÁPIDO UFRJ STORM - DEMONSTRAÇÃO
+# ✅ Dados carregados: 5857 registros, 33 colunas
+# ✅ Modelo Random Forest treinado
+# ✅ 5 plots gerados em /results/
+# 🎉 PIPELINE CONCLUÍDO COM SUCESSO!
+```
+
+```bash
+# Pipeline de produção: todos os algoritmos
+python run_production_pipeline.py
+
+# Saída esperada:
+# 🚀 PIPELINE PRODUTIVO UFRJ STORM
+# ✅ Dados processados e divididos
+# 🤖 Treinando 7 algoritmos ML...
+# 🏆 Melhor modelo: random_forest (RMSE: 2888.85)
+# 📈 5 visualizações geradas
+# 💾 Modelo e relatórios salvos
+# 🎉 PIPELINE CONCLUÍDO COM SUCESSO!
 ```
 
 ### Uso dos Modelos Treinados

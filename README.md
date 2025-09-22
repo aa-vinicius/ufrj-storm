@@ -38,14 +38,17 @@ ufrj-storm/
 ├── data/
 │   └── tma_sp.csv                 # Dataset principal
 ├── src/
-│   └── models.py                  # Classes dos modelos ML
+│   └── models.py                  # Classes dos modelos ML (biblioteca principal)
 ├── notebooks/
-│   └── data_quality_tests.ipynb   # Notebook principal TDD
+│   └── data_quality_tests.ipynb   # Notebook TDD para desenvolvimento
 ├── config/
-│   └── settings.py                # Configurações do projeto
+│   └── settings.py                # Configurações do projeto  
 ├── models/                        # Modelos treinados (ignorado no git)
+├── results/                       # Plots e relatórios gerados
 ├── docs/                          # Documentação técnica
 ├── tests/                         # Testes automatizados
+├── run_quick_pipeline.py          # Pipeline rápido (demonstração)
+├── run_production_pipeline.py     # Pipeline completo (produção)
 ├── requirements.txt               # Dependências Python
 ├── .gitignore                     # Arquivos ignorados
 └── README.md                      # Este arquivo
@@ -60,20 +63,34 @@ ufrj-storm/
 pip install -r requirements.txt
 ```
 
-### 2. Executar Análise Completa
+### 2. Pipeline Rápido (Demonstração)
 
 ```bash
-# Abrir Jupyter Notebook
+# Executar pipeline completo com 5 visualizações
+python run_quick_pipeline.py
+```
+
+### 3. Pipeline de Produção (Completo)
+
+```bash
+# Executar pipeline completo com todos os algoritmos
+python run_production_pipeline.py
+```
+
+### 4. Desenvolvimento Interativo (Jupyter)
+
+```bash
+# Abrir Jupyter Notebook para desenvolvimento
 jupyter notebook
 
-# Executar notebook principal
+# Executar notebook principal para testes TDD
 # notebooks/data_quality_tests.ipynb
 ```
 
-### 3. Executar Apenas Testes de Qualidade
+### 5. Executar Apenas Testes de Qualidade
 
 ```python
-# No notebook, executar seções 1-4 para validação dos dados
+# No notebook, executar células 1-6 para validação dos dados
 ```
 
 ## 🧪 Abordagem TDD
@@ -99,32 +116,60 @@ O projeto segue Test-Driven Development com testes automatizados para:
 
 ## 🤖 Modelos Implementados
 
-### Modelo 1: Previsão de Quantidade de Raios
+### Arquitetura: Dois Modelos em Cascata
+
+O sistema utiliza as classes `LightningPredictor` e `UncertaintyPredictor` da biblioteca `src/models.py`:
+
+### Modelo 1: Previsão de Quantidade de Raios (`LightningPredictor`)
 
 **Algoritmos Testados:**
 - Linear Regression
 - Ridge Regression  
 - Lasso Regression
-- Random Forest ⭐ (Melhor: RMSE = 2.792)
+- Random Forest ⭐ (Melhor: RMSE = 2.888)
 - Gradient Boosting
 - XGBoost
 - LightGBM
 
-**Métricas de Performance:**
-- RMSE: 2.792
-- MAE: 1.376
-- R²: 0.344
+**Métricas de Performance (Melhor Modelo):**
+- RMSE: 2.888
+- MAE: 1.447
+- R²: 0.297
 
-### Modelo 2: Intervalo de Confiança (95%)
+### Modelo 2: Intervalo de Confiança 95% (`UncertaintyPredictor`)
 
 **Algoritmo Usado:**
 - Random Forest para predição da incerteza
 
 **Métricas:**
-- Cobertura: 62.1% (subótima, requer ajustes)
-- Largura média do intervalo: 1.948
+- Cobertura: ~59.5% (em desenvolvimento)
+- Largura média do intervalo: ~2.071
 
-## 📈 Resultados Principais
+## � Visualizações Geradas
+
+O pipeline gera **5 plots** automaticamente em `/results/`:
+
+1. **Plot 1: Série Temporal Completa (2000-2019)**
+   - Treino vs teste com intervalos de confiança
+   - Círculos coloridos para observado/predito
+
+2. **Plot 2: Análise Detalhada do Período de Teste**
+   - Zoom no período 2015-2019
+   - Métricas de performance detalhadas
+
+3. **Plot 3: Acumulados Mensais**
+   - Comparação mensal observado vs predito
+   - Intervalos de confiança 95% mensais
+
+4. **Plot 4: Período Contínuo de 30 Dias**
+   - Zoom em 30 dias consecutivos do teste
+   - Visualização detalhada dia a dia
+
+5. **Plot 5: Período Específico (Nov/2018 - Mar/2019)**
+   - Análise de período histórico específico
+   - 150 dias com marcadores mensais
+
+## �📈 Resultados Principais
 
 ### Análise dos Dados
 
@@ -150,31 +195,50 @@ O projeto segue Test-Driven Development com testes automatizados para:
 
 ## 🔧 Pipeline de Processamento
 
+### Arquitetura do Sistema
+
+O sistema possui **2 pipelines principais** que utilizam a biblioteca `src/models.py`:
+
+#### Pipeline Rápido (`run_quick_pipeline.py`)
+- Demonstração com Random Forest
+- 5 visualizações automáticas
+- Relatório JSON completo
+- Execução ~2-3 minutos
+
+#### Pipeline de Produção (`run_production_pipeline.py`)
+- Todos os 7 algoritmos de ML
+- Validação cruzada completa
+- Seleção automática do melhor modelo
+- Relatórios detalhados
+- Execução ~10-15 minutos
+
+### Etapas do Processamento
+
 ### 1. Carregamento e Validação
-- Leitura do CSV
-- Conversão de tipos
-- Testes de qualidade automatizados
+- Leitura do CSV via `src/models.py`
+- Conversão de tipos automática
+- Testes de qualidade TDD (8 testes)
 
 ### 2. Pré-processamento
 - Limpeza de nomes de colunas
 - Criação de features temporais
-- Features cíclicas (sazonalidade)
-- Escalamento robusto
+- Escalamento robusto automático
 
 ### 3. Divisão dos Dados
 - Separação temporal (2000-2014 vs 2015-2019)
 - Preservação da ordem temporal
 
 ### 4. Treinamento
-- Múltiplos algoritmos em paralelo
+- Classe `LightningPredictor`: múltiplos algoritmos
+- Classe `UncertaintyPredictor`: intervalos de confiança
 - Validação cruzada (5-fold)
 - Seleção automática do melhor modelo
 
-### 5. Avaliação
-- Métricas de regressão
-- Análise de resíduos
-- Importância das features
-- Intervalos de confiança
+### 5. Avaliação e Visualização
+- Métricas de regressão automáticas
+- Geração de 5 plots
+- Análise de incerteza
+- Relatórios JSON/texto
 
 ## 📋 Melhorias Futuras
 
@@ -204,7 +268,23 @@ Para documentação detalhada:
 - **Roteiro de Produção**: `docs/production_guide.md`
 - **API Reference**: Docstrings nos módulos Python
 
-## 🐛 Troubleshooting
+## � Arquivos Gerados
+
+Após executar os pipelines, os seguintes arquivos são criados em `/results/`:
+
+### Visualizações (5 plots)
+- `temporal_series_complete_*.png` - Série temporal completa
+- `detailed_analysis_*.png` - Análise detalhada do teste
+- `monthly_accumulations_*.png` - Acumulados mensais
+- `detailed_30days_*.png` - Período de 30 dias
+- `specific_period_2018-2019_*.png` - Nov/2018 a Mar/2019
+
+### Relatórios e Modelos
+- `quick_report_*.json` - Relatório completo (pipeline rápido)
+- `production_report_*.txt` - Relatório detalhado (pipeline produção)
+- `lightning_model_*.joblib` - Modelo treinado salvo
+
+## �🐛 Troubleshooting
 
 ### Problemas Comuns
 
@@ -213,12 +293,16 @@ Para documentação detalhada:
    pip install xgboost lightgbm
    ```
 
-2. **Caracteres especiais em features**
-   - O pré-processamento automaticamente limpa os nomes
+2. **Erro "ModuleNotFoundError: No module named 'src'"**
+   ```bash
+   # Execute sempre a partir do diretório raiz do projeto
+   cd ufrj-storm/
+   python run_quick_pipeline.py
+   ```
 
 3. **Memória insuficiente**
-   - Reduzir `n_estimators` nos modelos
-   - Usar amostragem dos dados
+   - Use o pipeline rápido: `python run_quick_pipeline.py`
+   - Edite `n_estimators` em `config/settings.py`
 
 ## 👥 Contribuições
 
