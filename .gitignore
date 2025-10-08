@@ -1,5 +1,7 @@
 # dados brutos
-data/
+data/RINDAT/archive/
+data/DADOS RAIOS SUDESTE-20181129T194713Z-001.zip
+data/ufrj.tar.gz
 
 # arquivos fora do versionamento
 venv/
