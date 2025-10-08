@@ -1,0 +1,7 @@
+# dados brutos
+data/
+
+# arquivos fora do versionamento
+venv/
+__pycache__/
+*.pyc
