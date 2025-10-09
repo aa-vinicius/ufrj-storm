@@ -1,1 +1,0 @@
-# Módulo de processamento de dados RINDAT
